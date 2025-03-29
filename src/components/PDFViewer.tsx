@@ -33,12 +33,20 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [showTextMenu, setShowTextMenu] = useState<boolean>(false);
   const [menuPosition, setMenuPosition] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
   
+  // 添加连续滚动相关状态
+  const [continuousMode, setContinuousMode] = useState<boolean>(false);
+  const [visiblePages, setVisiblePages] = useState<number[]>([1]);
+  
   const containerRef = useRef<HTMLDivElement>(null);
+  const pdfContainerRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // 文档加载成功处理函数
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }): void => {
     setNumPages(numPages);
     setLoading(false);
+    // 初始化页面引用数组
+    pageRefs.current = Array(numPages).fill(null);
   };
 
   // 文档加载失败处理函数
@@ -52,18 +60,33 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const goToNextPage = (): void => {
     if (pageNumber < numPages) {
       setPageNumber(pageNumber + 1);
+      
+      // 在连续模式下滚动到下一页
+      if (continuousMode && pageRefs.current[pageNumber]) {
+        pageRefs.current[pageNumber]?.scrollIntoView({ behavior: 'smooth' });
+      }
     }
   };
 
   const goToPrevPage = (): void => {
     if (pageNumber > 1) {
       setPageNumber(pageNumber - 1);
+      
+      // 在连续模式下滚动到上一页
+      if (continuousMode && pageRefs.current[pageNumber - 2]) {
+        pageRefs.current[pageNumber - 2]?.scrollIntoView({ behavior: 'smooth' });
+      }
     }
   };
 
   const goToPage = (page: number): void => {
     if (page >= 1 && page <= numPages) {
       setPageNumber(page);
+      
+      // 在连续模式下滚动到指定页
+      if (continuousMode && pageRefs.current[page - 1]) {
+        pageRefs.current[page - 1]?.scrollIntoView({ behavior: 'smooth' });
+      }
     }
   };
 
@@ -132,6 +155,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     // 这里可以实现更复杂的高亮逻辑
     setShowTextMenu(false);
   };
+
+  // 切换连续滚动模式
+  const toggleContinuousMode = (): void => {
+    setContinuousMode(prev => !prev);
+  };
   
   // 点击其他地方关闭菜单
   useEffect(() => {
@@ -146,6 +174,79 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showTextMenu]);
+
+  // 处理连续滚动模式下的滚动事件
+  useEffect(() => {
+    if (!continuousMode || loading || !pdfContainerRef.current) return;
+
+    const handleScroll = (): void => {
+      if (!pdfContainerRef.current) return;
+      
+      // 获取容器滚动位置和尺寸
+      const containerTop = pdfContainerRef.current.scrollTop;
+      const containerHeight = pdfContainerRef.current.clientHeight;
+      const containerBottom = containerTop + containerHeight;
+      
+      // 查找当前可见的页面
+      const visible: number[] = [];
+      
+      pageRefs.current.forEach((pageRef, index) => {
+        if (!pageRef) return;
+        
+        const pageRect = pageRef.getBoundingClientRect();
+        const containerRect = pdfContainerRef.current!.getBoundingClientRect();
+        
+        // 计算页面相对于容器的位置
+        const pageTop = pageRect.top - containerRect.top + pdfContainerRef.current!.scrollTop;
+        const pageBottom = pageTop + pageRect.height;
+        
+        // 检查页面是否可见
+        const isVisible = 
+          (pageTop < containerBottom && pageBottom > containerTop) ||
+          (pageTop < containerTop && pageBottom > containerTop);
+        
+        if (isVisible) {
+          visible.push(index + 1);
+        }
+      });
+      
+      if (visible.length > 0) {
+        // 更新可见页面
+        setVisiblePages(visible);
+        
+        // 更新当前页码为最靠近视口中心的页面
+        const containerCenter = containerTop + containerHeight / 2;
+        let closestPage = 1;
+        let minDistance = Infinity;
+        
+        pageRefs.current.forEach((pageRef, index) => {
+          if (!pageRef) return;
+          
+          const pageRect = pageRef.getBoundingClientRect();
+          const containerRect = pdfContainerRef.current!.getBoundingClientRect();
+          const pageTop = pageRect.top - containerRect.top + pdfContainerRef.current!.scrollTop;
+          const pageCenter = pageTop + pageRect.height / 2;
+          const distance = Math.abs(pageCenter - containerCenter);
+          
+          if (distance < minDistance) {
+            minDistance = distance;
+            closestPage = index + 1;
+          }
+        });
+        
+        if (closestPage !== pageNumber) {
+          setPageNumber(closestPage);
+        }
+      }
+    };
+    
+    const container = pdfContainerRef.current;
+    container.addEventListener('scroll', handleScroll);
+    
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [continuousMode, loading, numPages, pageNumber]);
 
   // 加载状态组件
   const LoadingComponent = () => (
@@ -194,13 +295,61 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     </div>
   );
 
+  // 渲染单个页面的组件
+  const renderPage = (pageIndex: number) => (
+    <div 
+      key={`page_${pageIndex}`} 
+      ref={ref => pageRefs.current[pageIndex - 1] = ref}
+      className="mb-4"
+    >
+      <Page
+        pageNumber={pageIndex}
+        scale={scale}
+        renderTextLayer={true}
+        renderAnnotationLayer={true}
+        loading={<LoadingComponent />}
+        className="shadow-lg"
+      />
+      {continuousMode && (
+        <div className="text-center text-sm text-gray-500 mt-2">
+          第 {pageIndex} 页
+        </div>
+      )}
+    </div>
+  );
+
+  // 固定工具栏样式
+  const fixedToolbarStyle: React.CSSProperties = {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    backgroundColor: '#f3f4f6',
+    borderBottom: '1px solid #d1d5db',
+    padding: '1rem',
+    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)'
+  };
+
+  // 内容区域样式（考虑工具栏高度）
+  const contentStyle: React.CSSProperties = {
+    marginTop: '80px', // 工具栏的大致高度
+    flexGrow: 1,
+    height: 'calc(100vh - 160px)', // 减去工具栏和底部导航的高度
+    overflow: 'auto'
+  };
+
   return (
     <div 
       className="flex flex-col h-full w-full border border-gray-300 rounded-lg overflow-hidden shadow-lg"
       ref={containerRef}
+      style={{ position: 'relative', height: '100vh' }}
     >
-      {/* 工具栏 */}
-      <div className="bg-gray-100 p-4 flex flex-wrap justify-between items-center border-b border-gray-300">
+      {/* 工具栏 - 使用内联样式固定位置 */}
+      <div 
+        className="flex flex-wrap justify-between items-center"
+        style={fixedToolbarStyle}
+      >
         <div className="flex items-center space-x-2 mb-2 sm:mb-0">
           <button
             onClick={goToPrevPage}
@@ -247,14 +396,28 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           >
             重置
           </button>
+          <button 
+            onClick={toggleContinuousMode} 
+            className={`ml-4 px-3 py-1 rounded transition-colors ${
+              continuousMode 
+                ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                : 'bg-gray-300 hover:bg-gray-400 text-gray-800'
+            }`}
+            aria-label="切换连续滚动模式"
+            disabled={loading}
+          >
+            {continuousMode ? '单页模式' : '连续滚动'}
+          </button>
         </div>
       </div>
 
-      {/* PDF查看区域 */}
+      {/* PDF查看区域 - 使用内联样式调整位置 */}
       <div 
-        className="flex-1 overflow-auto bg-gray-200 p-4 flex justify-center relative"
+        className="bg-gray-200 p-4 flex justify-center relative"
         onMouseUp={handleTextSelection}
         onTouchEnd={handleTextSelection}
+        ref={pdfContainerRef}
+        style={contentStyle}
       >
         <div className="pdf-container">
           <Document
@@ -264,14 +427,18 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             loading={<LoadingComponent />}
             error={<ErrorComponent />}
           >
-            <Page
-              pageNumber={pageNumber}
-              scale={scale}
-              renderTextLayer={true}
-              renderAnnotationLayer={true}
-              loading={<LoadingComponent />}
-              className="shadow-lg"
-            />
+            {loading ? (
+              <LoadingComponent />
+            ) : continuousMode ? (
+              // 连续滚动模式：渲染所有页面
+              Array.from(
+                new Array(numPages),
+                (_, index) => renderPage(index + 1)
+              )
+            ) : (
+              // 单页模式：只渲染当前页
+              renderPage(pageNumber)
+            )}
           </Document>
         </div>
         
@@ -279,8 +446,18 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         {showTextMenu && <TextSelectionMenu />}
       </div>
 
-      {/* 页码导航 */}
-      <div className="bg-gray-100 p-4 border-t border-gray-300">
+      {/* 页码导航 - 底部固定 */}
+      <div 
+        className="bg-gray-100 p-4 border-t border-gray-300"
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          zIndex: 1000,
+          backgroundColor: '#f3f4f6',
+        }}
+      >
         <div className="flex justify-center items-center">
           <span className="mr-2">跳转到页码:</span>
           <input
