@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
 import 'react-pdf/dist/esm/Page/TextLayer.css';
@@ -29,6 +29,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [scale, setScale] = useState<number>(defaultScale);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
+  const [selectedText, setSelectedText] = useState<string>('');
+  const [showTextMenu, setShowTextMenu] = useState<boolean>(false);
+  const [menuPosition, setMenuPosition] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
+  
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // 文档加载成功处理函数
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }): void => {
@@ -74,6 +79,73 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const resetZoom = (): void => {
     setScale(defaultScale);
   };
+  
+  // 处理文本选择事件
+  const handleTextSelection = (): void => {
+    const selection = window.getSelection();
+    if (selection && selection.toString().trim().length > 0) {
+      const text = selection.toString();
+      setSelectedText(text);
+      
+      // 获取选中文本的位置以显示菜单
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      
+      // 计算相对于容器的位置
+      if (containerRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect();
+        setMenuPosition({
+          x: rect.left + rect.width / 2 - containerRect.left,
+          y: rect.bottom - containerRect.top
+        });
+        setShowTextMenu(true);
+      }
+    } else {
+      setSelectedText('');
+      setShowTextMenu(false);
+    }
+  };
+  
+  // 复制选中文本
+  const copySelectedText = (): void => {
+    navigator.clipboard.writeText(selectedText)
+      .then(() => {
+        // 显示复制成功提示
+        alert('文本已复制到剪贴板');
+        setShowTextMenu(false);
+      })
+      .catch(err => {
+        console.error('复制失败:', err);
+        alert('复制失败，请重试');
+      });
+  };
+  
+  // 搜索选中文本
+  const searchSelectedText = (): void => {
+    window.open(`https://www.google.com/search?q=${encodeURIComponent(selectedText)}`, '_blank');
+    setShowTextMenu(false);
+  };
+  
+  // 高亮选中文本（此处为示例，实际高亮功能需要更复杂的实现）
+  const highlightSelectedText = (): void => {
+    alert(`已高亮文本: "${selectedText}"`);
+    // 这里可以实现更复杂的高亮逻辑
+    setShowTextMenu(false);
+  };
+  
+  // 点击其他地方关闭菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent): void => {
+      if (showTextMenu && containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowTextMenu(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showTextMenu]);
 
   // 加载状态组件
   const LoadingComponent = () => (
@@ -91,8 +163,42 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     </div>
   );
 
+  // 文本选择菜单组件 - 横向显示
+  const TextSelectionMenu = () => (
+    <div 
+      className="absolute bg-white shadow-lg rounded-md border border-gray-200 py-2 px-2 z-10 flex flex-row"
+      style={{ 
+        left: `${menuPosition.x}px`, 
+        top: `${menuPosition.y}px`,
+        transform: 'translateX(-50%)'
+      }}
+    >
+      <button 
+        onClick={copySelectedText}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        复制
+      </button>
+      <button 
+        onClick={searchSelectedText}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        搜索
+      </button>
+      <button 
+        onClick={highlightSelectedText}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        高亮
+      </button>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col h-full w-full border border-gray-300 rounded-lg overflow-hidden shadow-lg">
+    <div 
+      className="flex flex-col h-full w-full border border-gray-300 rounded-lg overflow-hidden shadow-lg"
+      ref={containerRef}
+    >
       {/* 工具栏 */}
       <div className="bg-gray-100 p-4 flex flex-wrap justify-between items-center border-b border-gray-300">
         <div className="flex items-center space-x-2 mb-2 sm:mb-0">
@@ -145,7 +251,11 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       </div>
 
       {/* PDF查看区域 */}
-      <div className="flex-1 overflow-auto bg-gray-200 p-4 flex justify-center">
+      <div 
+        className="flex-1 overflow-auto bg-gray-200 p-4 flex justify-center relative"
+        onMouseUp={handleTextSelection}
+        onTouchEnd={handleTextSelection}
+      >
         <div className="pdf-container">
           <Document
             file={pdfUrl}
@@ -164,6 +274,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             />
           </Document>
         </div>
+        
+        {/* 文本选择菜单 */}
+        {showTextMenu && <TextSelectionMenu />}
       </div>
 
       {/* 页码导航 */}
@@ -181,6 +294,13 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
           />
           <span className="mx-2">共 {numPages} 页</span>
         </div>
+        
+        {/* 显示当前选中的文本 */}
+        {selectedText && (
+          <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-sm max-h-20 overflow-auto">
+            <strong>选中文本:</strong> {selectedText}
+          </div>
+        )}
       </div>
     </div>
   );
