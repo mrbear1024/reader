@@ -34,8 +34,26 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   const [menuPosition, setMenuPosition] = useState<{ x: number, y: number }>({ x: 0, y: 0 });
   
   // 添加连续滚动相关状态
-  const [continuousMode, setContinuousMode] = useState<boolean>(false);
+  const [continuousMode, setContinuousMode] = useState<boolean>(true);
   const [visiblePages, setVisiblePages] = useState<number[]>([1]);
+  
+  // 新增：添加结果面板相关状态
+  const [translatedText, setTranslatedText] = useState<string>('');
+  const [aiExplanation, setAiExplanation] = useState<string>('');
+  const [grammarAnalysis, setGrammarAnalysis] = useState<string>('');
+  const [savedWords, setSavedWords] = useState<string[]>([]);
+  const [showResultPanel, setShowResultPanel] = useState<boolean>(false);
+  const [activePanelType, setActivePanelType] = useState<'translate' | 'ai' | 'grammar' | 'none'>('none');
+
+// 调试用：在全局对象上添加一个可以在控制台调用的函数
+if (typeof window !== 'undefined') {
+  (window as any).testSelection = () => {
+    setSelectedText('测试文本');
+    setMenuPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    setShowTextMenu(true);
+    console.log('测试菜单已显示');
+  };
+}
   
   const containerRef = useRef<HTMLDivElement>(null);
   const pdfContainerRef = useRef<HTMLDivElement>(null);
@@ -114,15 +132,22 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
       
-      // 计算相对于容器的位置
-      if (containerRef.current) {
-        const containerRect = containerRef.current.getBoundingClientRect();
-        setMenuPosition({
-          x: rect.left + rect.width / 2 - containerRect.left,
-          y: rect.bottom - containerRect.top
-        });
+      // 计算相对于视窗的绝对位置
+      // 这样可以避免相对于容器定位导致的问题
+      setMenuPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.bottom + window.scrollY + 10 // 添加一些偏移，避免遮挡选中的文本
+      });
+      
+      // 确保先设置位置，再显示菜单
+      setTimeout(() => {
         setShowTextMenu(true);
-      }
+        // 重置结果面板
+        setShowResultPanel(false);
+        setActivePanelType('none');
+      }, 0);
+      
+      console.log("文本已选中:", text, "位置:", { x: rect.left + rect.width / 2, y: rect.bottom + window.scrollY });
     } else {
       setSelectedText('');
       setShowTextMenu(false);
@@ -156,6 +181,49 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     setShowTextMenu(false);
   };
 
+  // 新增：翻译选中文本
+  const translateText = (): void => {
+    // 这里实现调用翻译API的逻辑
+    // 模拟API调用
+    console.log("执行翻译:", selectedText);
+    setTranslatedText(`翻译结果: ${selectedText}`);
+    setActivePanelType('translate');
+    setShowResultPanel(true);
+    setShowTextMenu(false);
+  };
+
+  // 新增：AI讲解选中文本
+  const explainTextWithAI = (): void => {
+    // 这里实现调用AI解释API的逻辑
+    // 模拟API调用
+    setAiExplanation(`AI讲解: 这段文本"${selectedText}"的意思是...`);
+    setActivePanelType('ai');
+    setShowResultPanel(true);
+    setShowTextMenu(false);
+  };
+
+  // 新增：语法分析选中文本
+  const analyzeGrammar = (): void => {
+    // 这里实现调用语法分析API的逻辑
+    // 模拟API调用
+    setGrammarAnalysis(`语法分析: 这段文本"${selectedText}"的语法结构是...`);
+    setActivePanelType('grammar');
+    setShowResultPanel(true);
+    setShowTextMenu(false);
+  };
+
+  // 新增：收藏生词
+  const saveWord = (): void => {
+    setSavedWords(prevWords => {
+      if (!prevWords.includes(selectedText)) {
+        return [...prevWords, selectedText];
+      }
+      return prevWords;
+    });
+    alert(`已收藏: "${selectedText}"`);
+    setShowTextMenu(false);
+  };
+
   // 切换连续滚动模式
   const toggleContinuousMode = (): void => {
     setContinuousMode(prev => !prev);
@@ -164,12 +232,17 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
   // 点击其他地方关闭菜单
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent): void => {
-      if (showTextMenu && containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      // 不检查containerRef，而是直接判断点击的目标是否是菜单本身或其子元素
+      const menuElement = document.querySelector('.text-selection-menu');
+      if (showTextMenu && menuElement && !menuElement.contains(event.target as Node)) {
         setShowTextMenu(false);
       }
     };
     
+    // 先移除再添加，避免重复添加
+    document.removeEventListener('mousedown', handleClickOutside);
     document.addEventListener('mousedown', handleClickOutside);
+    
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
@@ -264,14 +337,15 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
     </div>
   );
 
-  // 文本选择菜单组件 - 横向显示
+  // 修改：文本选择菜单组件 - 添加新功能按钮
   const TextSelectionMenu = () => (
     <div 
-      className="absolute bg-white shadow-lg rounded-md border border-gray-200 py-2 px-2 z-10 flex flex-row"
+      className="text-selection-menu fixed bg-white shadow-lg rounded-md border border-gray-200 py-2 px-2 z-50 flex flex-row flex-wrap"
       style={{ 
         left: `${menuPosition.x}px`, 
         top: `${menuPosition.y}px`,
-        transform: 'translateX(-50%)'
+        transform: 'translateX(-50%)',
+        maxWidth: '95vw'
       }}
     >
       <button 
@@ -279,6 +353,30 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
       >
         复制
+      </button>
+      <button 
+        onClick={translateText}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        翻译
+      </button>
+      <button 
+        onClick={explainTextWithAI}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        AI讲解
+      </button>
+      <button 
+        onClick={analyzeGrammar}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        语法分析
+      </button>
+      <button 
+        onClick={saveWord}
+        className="px-3 py-1 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md mx-1"
+      >
+        生词收藏
       </button>
       <button 
         onClick={searchSelectedText}
@@ -292,6 +390,36 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       >
         高亮
       </button>
+    </div>
+  );
+
+  // 新增：结果面板组件
+  const ResultPanel = () => (
+    <div className="fixed bg-white shadow-lg rounded-md border border-gray-200 p-4 z-50 w-full max-w-md max-h-64 overflow-auto"
+      style={{ 
+        left: `${menuPosition.x}px`, 
+        top: `${menuPosition.y + 10}px`,
+        transform: 'translateX(-50%)'
+      }}
+    >
+      <div className="flex justify-between items-center mb-2">
+        <h3 className="font-bold text-lg">
+          {activePanelType === 'translate' ? '翻译结果' : 
+           activePanelType === 'ai' ? 'AI讲解' : 
+           activePanelType === 'grammar' ? '语法分析' : ''}
+        </h3>
+        <button 
+          onClick={() => setShowResultPanel(false)}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="mt-2">
+        {activePanelType === 'translate' && translatedText}
+        {activePanelType === 'ai' && aiExplanation}
+        {activePanelType === 'grammar' && grammarAnalysis}
+      </div>
     </div>
   );
 
@@ -414,8 +542,6 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
       {/* PDF查看区域 - 使用内联样式调整位置 */}
       <div 
         className="bg-gray-200 p-4 flex justify-center relative"
-        onMouseUp={handleTextSelection}
-        onTouchEnd={handleTextSelection}
         ref={pdfContainerRef}
         style={contentStyle}
       >
@@ -426,6 +552,8 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
             onLoadError={onDocumentLoadError}
             loading={<LoadingComponent />}
             error={<ErrorComponent />}
+            onMouseUp={handleTextSelection}
+            onTouchEnd={handleTextSelection}
           >
             {loading ? (
               <LoadingComponent />
@@ -444,6 +572,9 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         
         {/* 文本选择菜单 */}
         {showTextMenu && <TextSelectionMenu />}
+        
+        {/* 结果面板 */}
+        {showResultPanel && <ResultPanel />}
       </div>
 
       {/* 页码导航 - 底部固定 */}
@@ -476,6 +607,20 @@ const PDFViewer: React.FC<PDFViewerProps> = ({
         {selectedText && (
           <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-sm max-h-20 overflow-auto">
             <strong>选中文本:</strong> {selectedText}
+          </div>
+        )}
+        
+        {/* 新增：显示收藏的生词列表 */}
+        {savedWords.length > 0 && (
+          <div className="mt-3">
+            <div className="font-medium mb-1">收藏的生词:</div>
+            <div className="flex flex-wrap gap-2">
+              {savedWords.map((word, index) => (
+                <span key={index} className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">
+                  {word}
+                </span>
+              ))}
+            </div>
           </div>
         )}
       </div>
